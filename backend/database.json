@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1779179918144,
+    "title": "our body",
+    "emoji": "📚",
+    "status": "Active",
+    "pages": 12,
+    "fileData": "/api/templates/1779179918144.pdf"
+  },
+  {
+    "id": 1779179656092,
+    "title": "Space Voyage",
+    "emoji": "🚀",
+    "status": "Active",
+    "pages": 12,
+    "fileData": "/api/templates/1779179656092.pdf"
+  },
+  {
+    "id": 1,
+    "title": "Space Explorer",
+    "emoji": "🚀",
+    "status": "Active",
+    "pages": 12,
+    "fileData": "data:application/pdf;base64,dGVzdA=="
+  }
+]
