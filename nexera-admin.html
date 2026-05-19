@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>NexEra - Admin Dashboard</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Nunito', 'sans-serif'],
+            display: ['Quicksand', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              navy: '#073B4C',
+              coral: '#EF476F',
+              blue: '#118AB2',
+              yellow: '#FFD166',
+              green: '#06D6A0',
+              bg: '#F3F4F6'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style type="text/tailwindcss">
+    @layer base {
+      body {
+        @apply bg-brand-bg text-brand-navy font-sans;
+      }
+      h1, h2, h3, h4 {
+        @apply font-display tracking-tight;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const initialStories = [
+      { id: 1, title: 'Space Explorer', emoji: '🚀', status: 'Active', pages: 12 },
+      { id: 2, title: 'Marine Biologist', emoji: '🐋', status: 'Active', pages: 10 },
+      { id: 3, title: 'Jungle Explorer', emoji: '🦖', status: 'Active', pages: 14 }
+    ];
+
+    const AdminDashboard = () => {
+      const [activeTab, setActiveTab] = useState('database');
+      const [stories, setStories] = useState([]);
+      const isRemote = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.protocol !== 'file:';
+
+      useEffect(() => {
+        const fetchUrl = window.location.protocol === 'file:' ? 'http://localhost:8001/api/stories' : '/api/stories';
+        fetch(fetchUrl)
+          .then(res => res.json())
+          .then(data => {
+            setStories(data);
+          })
+          .catch(err => console.error("Failed to load stories database:", err));
+      }, []);
+
+      const updateStoriesAndSave = async (updatedStories) => {
+        setStories(updatedStories);
+        const fetchUrl = window.location.protocol === 'file:' ? 'http://localhost:8001/api/stories' : '/api/stories';
+        try {
+          const response = await fetch(fetchUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(updatedStories)
+          });
+          if (!response.ok) {
+            throw new Error(`Failed to save to server. Status: ${response.status}`);
+          }
+        } catch (err) {
+          console.error("Error saving stories database:", err);
+          alert("Failed to save templates to server database! Check if server.py is running.");
+        }
+      };
+
+      const [isUploading, setIsUploading] = useState(false);
+      const [newStory, setNewStory] = useState({ title: '', emoji: '', file: null });
+      const [inputKey, setInputKey] = useState(Date.now());
+      
+      const [editingStoryId, setEditingStoryId] = useState(null);
+      const [editForm, setEditForm] = useState({ title: '', emoji: '' });
+      const [viewingPdf, setViewingPdf] = useState(null);
+
+      // --- AI Settings State ---
+      const [colabUrl, setColabUrl] = useState('');
+      const [aiEngine, setAiEngine] = useState('local'); // 'local' or 'colab'
+      const [isSavingSettings, setIsSavingSettings] = useState(false);
+      const [settingsMessage, setSettingsMessage] = useState(null);
+
+      useEffect(() => {
+        const fetchUrl = window.location.protocol === 'file:' ? 'http://localhost:8001/api/settings' : '/api/settings';
+        fetch(fetchUrl)
+          .then(res => res.json())
+          .then(data => {
+            if (data.colab_url) {
+              setColabUrl(data.colab_url);
+              setAiEngine('colab');
+            } else {
+              setAiEngine('local');
+            }
+          })
+          .catch(err => console.error("Failed to load AI settings:", err));
+      }, []);
+
+      const handleSaveSettings = async (e) => {
+        e.preventDefault();
+        setIsSavingSettings(true);
+        setSettingsMessage(null);
+
+        const urlToSave = aiEngine === 'colab' ? colabUrl : '';
+
+        try {
+          const fetchUrl = window.location.protocol === 'file:' ? 'http://localhost:8001/api/settings' : '/api/settings';
+          const response = await fetch(fetchUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ colab_url: urlToSave })
+          });
+          
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Server returned ${response.status}: ${errText}`);
+          }
+
+          const data = await response.json();
+          if (data.status === 'success') {
+            setSettingsMessage({ type: 'success', text: '✅ AI Engine Configuration Saved Successfully! Your website is now connected to Colab!' });
+          } else {
+            throw new Error("Failed to save");
+          }
+        } catch (err) {
+          console.error("Save Settings Error:", err);
+          setSettingsMessage({ type: 'error', text: '❌ Failed to save AI settings. Make sure server.py is running on port 8001.' });
+        } finally {
+          setIsSavingSettings(false);
+        }
+      };
+
+      const resolveTemplateUrl = (url) => {
+        if (!url) return "";
+        if (url.startsWith('data:') || url.startsWith('http')) return url;
+        const backendOrigin = window.location.protocol === 'file:' ? 'http://localhost:8001' : window.location.origin;
+        return `${backendOrigin}${url}`;
+      };
+
+      const renderPreview = (dataUrl) => {
+        if (!dataUrl) return null;
+        if (!dataUrl.startsWith('data:')) {
+          const resolved = resolveTemplateUrl(dataUrl);
+          return <iframe src={resolved} className="w-full h-full border-none bg-slate-100"></iframe>;
+        }
+        if (dataUrl.startsWith('data:image/')) {
+          return <img src={dataUrl} className="w-full h-full object-contain bg-slate-100" alt="Preview" />;
+        }
+        try {
+          const byteString = atob(dataUrl.split(',')[1]);
+          const mimeString = dataUrl.split(',')[0].split(':')[1].split(';')[0];
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          const blob = new Blob([ab], {type: mimeString});
+          const blobUrl = URL.createObjectURL(blob);
+          return <iframe src={blobUrl} className="w-full h-full border-none bg-slate-100"></iframe>;
+        } catch(e) {
+          return <div className="p-8 text-center text-red-500 font-bold">Error rendering preview.</div>;
+        }
+      };
+
+      const handleEditClick = (story) => {
+        setEditingStoryId(story.id);
+        setEditForm({ title: story.title, emoji: story.emoji });
+      };
+
+      const handleUpdateStory = (id) => {
+        const updated = stories.map(s => s.id === id ? { ...s, title: editForm.title, emoji: editForm.emoji } : s);
+        updateStoriesAndSave(updated);
+        setEditingStoryId(null);
+      };
+
+      const handleDeleteStory = (id) => {
+        if(window.confirm("Are you sure you want to permanently delete this base story?")) {
+          const updated = stories.filter(s => s.id !== id);
+          updateStoriesAndSave(updated);
+          setEditingStoryId(null);
+        }
+      };
+
+      const handleFileUpload = (e) => {
+        setNewStory({ ...newStory, file: e.target.files[0] });
+      };
+
+      const handleUploadSubmit = async (e) => {
+        e.preventDefault();
+        if (!newStory.title) return alert("Error: Please provide a Story Title.");
+        if (!newStory.file) return alert("Error: Please select a Base Story File to upload.");
+        
+        setIsUploading(true);
+
+        const formData = new FormData();
+        formData.append('title', newStory.title);
+        formData.append('emoji', newStory.emoji || '📚');
+        formData.append('file', newStory.file);
+
+        try {
+          const fetchUrl = window.location.protocol === 'file:' ? 'http://localhost:8001/api/stories/upload' : '/api/stories/upload';
+          const response = await fetch(fetchUrl, {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Upload failed with status ${response.status}: ${errText}`);
+          }
+
+          const data = await response.json();
+          if (data.status === 'success') {
+            setStories(prevStories => [data.story, ...prevStories]);
+            setNewStory({ title: '', emoji: '', file: null });
+            setInputKey(Date.now());
+          } else {
+            throw new Error("Server returned unsuccessful status");
+          }
+        } catch (err) {
+          console.error("Error uploading story template:", err);
+          if (isRemote) {
+            alert(`Failed to upload template: ${err.message}\n\n💡 Tip: You are using a public tunnel session which has a size restriction. If this PDF file is large, please open the local link on your computer to upload it without any limits:\nhttp://localhost:8001/admin`);
+          } else {
+            alert(`Failed to upload template: ${err.message}`);
+          }
+        } finally {
+          setIsUploading(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex">
+          {/* Sidebar */}
+          <div className="w-64 bg-white border-r border-slate-200 p-6 flex flex-col">
+            <h1 className="text-2xl font-black text-brand-coral mb-10">NexEra Admin</h1>
+            <nav className="flex-1 space-y-2">
+              <button 
+                onClick={() => setActiveTab('database')} 
+                className={`w-full flex items-center gap-3 px-4 py-3 font-bold rounded-xl transition-colors ${activeTab === 'database' ? 'bg-blue-50 text-brand-blue' : 'text-slate-50 hover:bg-slate-50'}`}
+              >
+                <span className="text-xl">📚</span> Story Database
+              </button>
+              <button 
+                onClick={() => setActiveTab('orders')} 
+                className={`w-full flex items-center gap-3 px-4 py-3 font-bold rounded-xl transition-colors ${activeTab === 'orders' ? 'bg-blue-50 text-brand-blue' : 'text-slate-50 hover:bg-slate-50'}`}
+              >
+                <span className="text-xl">🛍️</span> Orders
+              </button>
+              <button 
+                onClick={() => setActiveTab('settings')} 
+                className={`w-full flex items-center gap-3 px-4 py-3 font-bold rounded-xl transition-colors ${activeTab === 'settings' ? 'bg-blue-50 text-brand-blue' : 'text-slate-50 hover:bg-slate-50'}`}
+              >
+                <span className="text-xl">⚙️</span> AI Settings
+              </button>
+            </nav>
+          </div>
+
+          <div className="flex-1 p-10 overflow-y-auto">
+            <div className="max-w-5xl mx-auto">
+              
+              {isRemote && (
+                <div className="bg-amber-50 border-2 border-amber-200 p-5 rounded-2xl mb-8 text-amber-800 flex items-start gap-4 shadow-sm">
+                  <span className="text-3xl">⚠️</span>
+                  <div>
+                    <h4 className="font-extrabold text-lg mb-1">Public Tunnel Session (Size Restricted)</h4>
+                    <p className="text-sm font-medium">
+                      You are currently accessing the Admin Dashboard via a public Serveo tunnel. Free tunnels restrict file uploads to a few megabytes. 
+                      If your PDF template upload fails or hangs, please open the dashboard locally on your laptop: 
+                      <a href="http://localhost:8001/admin" className="underline font-bold text-blue-600 hover:text-blue-800 ml-1" target="_blank" rel="noreferrer">
+                        http://localhost:8001/admin
+                      </a> (which has no upload size limits).
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'database' && (
+                <>
+                  <header className="mb-10 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-4xl font-extrabold text-brand-navy">Base Story Database</h2>
+                      <p className="text-slate-500 font-medium">Manage original PDF templates for the AI generator.</p>
+                    </div>
+                  </header>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* Upload Form */}
+                    <div className="lg:col-span-1 bg-white p-6 rounded-3xl shadow-sm border border-slate-200 h-fit">
+                      <h3 className="text-xl font-bold mb-4">Upload New Template</h3>
+                      <form onSubmit={handleUploadSubmit} className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-bold text-slate-600 mb-1">Story Title</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g., Doctor Aarav"
+                            value={newStory.title}
+                            onChange={(e) => setNewStory({...newStory, title: e.target.value})}
+                            className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-2 font-medium focus:outline-none focus:border-brand-blue" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-slate-600 mb-1">Theme Emoji</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g., 🩺"
+                            value={newStory.emoji}
+                            onChange={(e) => setNewStory({...newStory, emoji: e.target.value})}
+                            className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-2 font-medium focus:outline-none focus:border-brand-blue" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-slate-600 mb-1">Base Story File</label>
+                          <div className="w-full border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:bg-slate-50 transition-colors relative cursor-pointer group">
+                            <span className="text-3xl mb-2 block group-hover:scale-110 transition-transform">📄</span>
+                            <span className="text-sm font-bold text-brand-blue">
+                              {newStory.file ? newStory.file.name : "Click here to select a file"}
+                            </span>
+                            <input key={inputKey} type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                          </div>
+                          <p className="text-xs text-slate-400 mt-2">You can select any file format for this test.</p>
+                        </div>
+                        <button 
+                          type="submit" 
+                          disabled={isUploading}
+                          className="w-full py-3 bg-brand-navy hover:bg-slate-800 text-white font-bold rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {isUploading ? (
+                            <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Uploading...</>
+                          ) : (
+                            "Upload to Database"
+                          )}
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Database List */}
+                    <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+                      <h3 className="text-xl font-bold mb-4">Current Active Templates</h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="border-b-2 border-slate-100 text-slate-400">
+                              <th className="pb-3 font-bold">Theme</th>
+                              <th className="pb-3 font-bold">Pages</th>
+                              <th className="pb-3 font-bold">Status</th>
+                              <th className="pb-3 font-bold text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {stories.map(story => {
+                              if (editingStoryId === story.id) {
+                                return (
+                                  <tr key={story.id} className="border-b border-brand-blue/20 bg-blue-50/50">
+                                    <td className="py-4" colSpan="4">
+                                      <div className="flex flex-wrap items-center gap-4 px-2">
+                                        <input 
+                                          type="text" 
+                                          value={editForm.emoji} 
+                                          onChange={(e) => setEditForm({...editForm, emoji: e.target.value})} 
+                                          className="w-16 bg-white border border-slate-300 rounded-lg px-2 py-2 text-2xl text-center focus:outline-none focus:border-brand-blue" 
+                                          title="Emoji"
+                                        />
+                                        <input 
+                                          type="text" 
+                                          value={editForm.title} 
+                                          onChange={(e) => setEditForm({...editForm, title: e.target.value})} 
+                                          className="flex-1 min-w-[200px] bg-white border border-slate-300 rounded-lg px-4 py-2 font-bold text-brand-navy focus:outline-none focus:border-brand-blue" 
+                                        />
+                                        <div className="flex gap-2 justify-end ml-auto">
+                                          <button onClick={() => setEditingStoryId(null)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+                                          <button onClick={() => handleDeleteStory(story.id)} className="px-4 py-2 bg-red-100 text-red-600 font-bold hover:bg-red-200 rounded-lg flex items-center gap-2 transition-colors">🗑️ Delete</button>
+                                          <button onClick={() => handleUpdateStory(story.id)} className="px-4 py-2 bg-brand-blue text-white font-bold hover:bg-[#0e7496] rounded-lg transition-colors shadow-sm">Save Changes</button>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              return (
+                                <tr key={story.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                                  <td className="py-4">
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-3xl bg-slate-100 p-2 rounded-xl">{story.emoji}</span>
+                                      <span className="font-bold text-lg text-brand-navy">{story.title}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-4 font-bold text-slate-500">{story.pages}</td>
+                                  <td className="py-4">
+                                    <span className="px-3 py-1 bg-green-100 text-green-700 font-bold text-sm rounded-full">{story.status}</span>
+                                  </td>
+                                  <td className="py-4 text-right">
+                                    <div className="flex gap-4 justify-end">
+                                      <button onClick={() => setViewingPdf(story)} className="text-brand-navy font-bold hover:text-brand-coral flex items-center gap-1">👁️ View</button>
+                                      <button onClick={() => handleEditClick(story)} className="text-brand-blue font-bold hover:underline">Edit</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'orders' && (
+                <div className="bg-white p-10 rounded-3xl shadow-sm border border-slate-200 text-center">
+                  <span className="text-6xl mb-4 block">🛍️</span>
+                  <h3 className="text-2xl font-bold mb-2 text-brand-navy">Customer Orders</h3>
+                  <p className="text-slate-500 max-w-md mx-auto">When customers complete checkout on the standalone frontend, their print orders and shipping addresses will appear here.</p>
+                </div>
+              )}
+
+              {activeTab === 'settings' && (
+                <div className="bg-white p-10 rounded-3xl shadow-sm border border-slate-200 max-w-3xl mx-auto">
+                  <header className="mb-8 border-b border-slate-100 pb-6">
+                    <h2 className="text-3xl font-extrabold text-brand-navy mb-2">AI Generation Engine Settings</h2>
+                    <p className="text-slate-500 font-medium">Configure the backend AI engine used when users click "Generate Full Story Preview".</p>
+                  </header>
+
+                  {settingsMessage && (
+                    <div className={`p-4 rounded-2xl font-bold mb-8 ${settingsMessage.type === 'success' ? 'bg-green-100 text-green-800 border-2 border-green-200' : 'bg-red-100 text-red-800 border-2 border-red-200'}`}>
+                      {settingsMessage.text}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleSaveSettings} className="space-y-8">
+                    <div className="space-y-4">
+                      <label className="block text-lg font-bold text-brand-navy mb-2">Select Generation Engine</label>
+                      
+                      {/* Local Engine Option */}
+                      <label className={`flex items-start gap-4 p-6 rounded-2xl border-4 cursor-pointer transition-all ${aiEngine === 'local' ? 'border-brand-blue bg-blue-50/50 shadow-sm' : 'border-slate-100 hover:border-slate-200 bg-white'}`}>
+                        <input 
+                          type="radio" 
+                          name="aiEngine" 
+                          value="local" 
+                          checked={aiEngine === 'local'} 
+                          onChange={() => setAiEngine('local')}
+                          className="mt-1 w-5 h-5 text-brand-blue focus:ring-brand-blue" 
+                        />
+                        <div>
+                          <span className="font-bold text-brand-navy text-lg block mb-1">⚡ Local AI Engine (Smart Blender)</span>
+                          <p className="text-slate-500 text-sm font-medium">Runs locally on your laptop CPU/GPU using OpenCV. Good for fast previews and offline testing.</p>
+                        </div>
+                      </label>
+
+                      {/* Colab Cloud Engine Option */}
+                      <label className={`flex items-start gap-4 p-6 rounded-2xl border-4 cursor-pointer transition-all ${aiEngine === 'colab' ? 'border-brand-coral bg-rose-50/50 shadow-sm' : 'border-slate-100 hover:border-slate-200 bg-white'}`}>
+                        <input 
+                          type="radio" 
+                          name="aiEngine" 
+                          value="colab" 
+                          checked={aiEngine === 'colab'} 
+                          onChange={() => setAiEngine('colab')}
+                          className="mt-1 w-5 h-5 text-brand-coral focus:ring-brand-coral" 
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-1">
+                            <span className="font-bold text-brand-navy text-lg">🎨 Cloud Pro Engine (Level 3 Masterpiece)</span>
+                            <span className="px-3 py-0.5 bg-brand-coral text-white font-extrabold text-xs rounded-full uppercase tracking-wider">Recommended</span>
+                          </div>
+                          <p className="text-slate-500 text-sm font-medium mb-4">Connects directly to your Google Colab T4 GPU running Stable Diffusion + IP-Adapter. Produces breathtaking illustration-quality face redraws.</p>
+                          
+                          {aiEngine === 'colab' && (
+                            <div className="space-y-2 pt-2 border-t border-rose-200/60">
+                              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">Colab AI Server Cloudflare URL</label>
+                              <input 
+                                type="text" 
+                                placeholder="https://xxxx.trycloudflare.com" 
+                                value={colabUrl}
+                                onChange={(e) => setColabUrl(e.target.value)}
+                                className="w-full bg-white border-2 border-rose-200 focus:border-brand-coral rounded-xl px-4 py-3 text-brand-navy font-bold focus:outline-none shadow-inner"
+                              />
+                              <p className="text-xs text-slate-400">Run Cell 6 in your Colab notebook to generate this secure URL.</p>
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    </div>
+
+                    <button 
+                      type="submit" 
+                      disabled={isSavingSettings}
+                      className="w-full py-4 bg-brand-navy hover:bg-slate-800 text-white font-black rounded-2xl text-lg transition-all shadow-[0_10px_20px_rgba(7,59,76,0.2)] hover:scale-[1.02] disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isSavingSettings ? (
+                        <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Saving Configuration...</>
+                      ) : (
+                        "💾 Save AI Configuration"
+                      )}
+                    </button>
+                  </form>
+                </div>
+              )}
+
+            </div>
+          </div>
+          
+          {/* PDF Viewer Modal */}
+          {viewingPdf && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col p-8">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl font-bold text-white flex items-center gap-2">📄 Base PDF Template Preview</h3>
+                <button onClick={() => setViewingPdf(null)} className="px-6 py-2 bg-white text-brand-navy font-bold rounded-lg hover:bg-slate-200">Close Viewer ✕</button>
+              </div>
+              <div className="flex-1 bg-white rounded-2xl overflow-hidden shadow-2xl relative">
+                {!viewingPdf.fileData ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50 p-8 text-center">
+                    <span className="text-6xl mb-4 text-slate-300">📁</span>
+                    {viewingPdf.id <= 3 ? (
+                      <div>
+                        <h4 className="text-xl font-bold text-slate-500">This is a default mock template.</h4>
+                        <p className="text-slate-400 mt-2 max-w-md mx-auto">The default stories do not have physical PDF files attached to them in this prototype.</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <h4 className="text-xl font-bold text-slate-500">File Preview Not Available.</h4>
+                        <p className="text-slate-400 mt-2 max-w-md mx-auto">This story was either uploaded before the preview feature was added, or the PDF file was too large.</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  renderPreview(viewingPdf.fileData)
+                )}
+              </div>
+            </div>
+          )}
+          
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<AdminDashboard />);
+  </script>
+</body>
+</html>
